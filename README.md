@@ -3,58 +3,53 @@
 [![Python Version](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/)
 [![Model Context Protocol](https://img.shields.io/badge/MCP-Standard%20stdio-orange.svg)](https://modelcontextprotocol.io/)
 [![FastMCP](https://img.shields.io/badge/Framework-FastMCP-brightgreen.svg)](https://github.com/modelcontextprotocol/python-sdk)
-[![Security Architecture](https://img.shields.io/badge/Security-Zero--Trust%20Hardened-red.svg)](#zero-trust-security-how-it-protects-the-pc)
+[![Security Architecture](https://img.shields.io/badge/Security-Zero--Trust%20Hardened-red.svg)](#zero-trust-security-architecture)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2011-lightgrey.svg)](https://microsoft.com/windows)
 
 **Workspace Manager MCP Server** is a secure, production-grade Model Context Protocol (MCP) server that empowers **Claude Desktop** to autonomously read, write, and execute terminal commands while enforcing **strict Zero-Trust isolation**. All file operations and command executions are mathematically quarantined inside `D:\mcp\workspace` on Windows, ensuring that an AI assistant cannot access, alter, or damage anything on the host computer.
 
 ---
 
-## 🔌 What is MCP? (Explain Like I'm 5)
+## Model Context Protocol (MCP) Architecture
 
-Imagine buying a state-of-the-art laptop, but it has **no ports**—no USB, no HDMI, no SD card slot. Even if it's the fastest computer in the world, it cannot print a document, read a flash drive, or control an external mouse.
+The **Model Context Protocol (MCP)** is an open standard developed by Anthropic designed to connect AI assistants like Claude to external tools, local filesystems, databases, and APIs.
 
-Until recently, Large Language Models (LLMs) like Claude were like that portless laptop: brilliant at thinking and conversing, but isolated in a digital bubble without direct access to your local files, compilers, or developer tools.
-
-> **The Model Context Protocol (MCP) is the universal USB-C port for Artificial Intelligence.**
-
-Just like USB-C allows you to plug any external device into your laptop using one standard cable, MCP allows AI applications to connect to external databases, filesystems, and terminal servers using an open standard protocol.
+By default, Large Language Models operate in an isolated context without direct operating system access. MCP solves this by establishing a standardized client-server architecture:
 
 ```
        +-------------------------------------------------------------+
        |                        Claude Desktop                       |
-       |                    (The Host / Client AI)                   |
+       |                    (Host Application / AI)                  |
        +-------------------------------------------------------------+
                                       │
-                         JSON-RPC messages via stdin/stdout
-                                (The USB-C Cable)
+                         JSON-RPC 2.0 messages via stdio
                                       │
                                       ▼
        +-------------------------------------------------------------+
        |               server.py ("WorkspaceManager")                |
-       |                      (The MCP Server)                       |
+       |                      (Local MCP Server)                     |
        +-------------------------------------------------------------+
                                       │
                          Sandboxed Tools & Verification
                                       │
                                       ▼
-                      +───────────────────────────────+
-                      |        D:\mcp\workspace       |
-                      |   (Secure Local Environment)  |
-                      +───────────────────────────────+
+                       +───────────────────────────────+
+                       |        D:\mcp\workspace       |
+                       |      (Allowed Target Path)    |
+                       +───────────────────────────────+
 ```
 
-### The Three Roles in MCP:
-1. **The Host / Client (Claude Desktop)**: The brains of the operation. It decides *when* and *why* an external tool is required.
-2. **The Server (`server.py`)**: The security guard and translator. It advertises available tools, intercepts AI requests, validates security boundaries, and carries out operations.
-3. **The Tools (`list_workspace`, `read_file`, `write_file`, `execute_command`)**: Individual Python functions exposed to the AI that act as hands and eyes in the local operating system.
+### Architectural Roles:
+1. **The Host / Client (Claude Desktop)**: The LLM runtime and user interface. It detects user intent, determines when external tools are required, constructs arguments, and formats the output.
+2. **The Server (`server.py`)**: The local background process exposing tools over stdio. It acts as an authoritative security boundary by validating all incoming arguments before execution.
+3. **The Tools (`list_workspace`, `read_file`, `write_file`, `execute_command`)**: Discrete Python functions registered via FastMCP that execute within the local environment.
 
-### How They Talk (`stdio` & JSON-RPC)
-Claude Desktop launches `server.py` as a background child process. They communicate by passing structured **JSON-RPC** packets over the server process's standard input (`stdin`) and standard output (`stdout`).
+### Transport and Protocol (`stdio` & JSON-RPC)
+The host spawns `server.py` as a subprocess and establishes communication through standard input (`stdin`) and standard output (`stdout`). All messages adhere to the JSON-RPC 2.0 specification, enabling bi-directional tool invocation without opening network ports or exposing local sockets to the internet.
 
 ---
 
-## 🏛️ Project Architecture & Folder Structure
+## Project Architecture and Directory Structure
 
 This project strictly separates the **server execution code** from the **sandboxed workspace**:
 
@@ -96,7 +91,7 @@ D:\mcp\
 │       ├── .python-version       <-- Python version declaration (3.13)
 │       ├── pyproject.toml        <-- uv project configuration (mcp[cli])
 │       ├── uv.lock               <-- Locked reproducible dependencies
-│       ├── README.md             <-- Architecture & beginner setup guide
+│       ├── README.md             <-- Architecture & setup guide
 │       └── server.py             <-- Zero-Trust Hardened MCP Server implementation
 │
 └── workspace\                    <-- THE SANDBOX (CLAUDE'S WORKSPACE)
@@ -106,11 +101,46 @@ D:\mcp\
 
 ---
 
-## 🔒 Zero-Trust Security: How It Protects the PC
+## Practical Use Cases
 
-Giving an AI assistant terminal access to a computer sounds terrifying—what if it hallucinates, executes a prompt injection payload, or runs `del C:\Windows`?
+This server transforms Claude Desktop from a passive text generator into an active, self-correcting development partner. Common workflows include:
 
-This server implements **Zero-Trust Hardened Security**. It assumes every tool call is potentially malicious and applies defense-in-depth before executing anything.
+### 1. Autonomous Development and Self-Healing Debug Loops
+Instead of manually copying code snippets between Claude and an editor:
+- Prompt Claude: *"Build a command-line currency converter in Python that fetches live exchange rates from an open API. Save it, run it, and verify the output."*
+- Claude writes `converter.py` using `write_file`.
+- Claude runs `python converter.py` using `execute_command`.
+- If an exception or missing dependency occurs, Claude reads the traceback from `stderr`, updates the code via `write_file`, and re-runs the script until execution succeeds.
+
+### 2. Local Data Engineering and Analytics
+Place datasets (CSV, JSON, SQLite, Parquet) into `D:\mcp\workspace`:
+- Prompt Claude: *"Analyze `quarterly_sales.csv`. Filter for the EMEA region, calculate average order value by product category, and generate a markdown summary report."*
+- Claude inspects the folder with `list_workspace`, writes a script utilizing Pandas or DuckDB, executes the calculation, and returns the verified findings.
+
+### 3. Automated Refactoring and Test Suite Execution
+When modernizing legacy code or improving test coverage:
+- Place your module and test files in `D:\mcp\workspace`.
+- Prompt Claude: *"Run `pytest`. Analyze every failing test, refactor `parser.py` to fix the bugs without changing expected signatures, and confirm all tests pass."*
+- Claude executes the test runner, isolates failures, refactors the source files, and verifies coverage.
+
+### 4. Project Scaffolding and Environment Setup
+- Have Claude bootstrap complete projects from scratch (e.g., `uv init`, `npm init -y`, `cargo init`).
+- Claude can scaffold configuration files, package manifests, folder trees, and verify that the initial project builds cleanly.
+
+### 5. Automated File Processing and Batch Conversions
+- Batch file renaming, bulk JSON formatting, log file parsing, Markdown document generation, and media transformations using CLI tools (e.g., `ffmpeg`).
+- Claude formulates the exact shell command, executes it within the sandbox, and validates output files.
+
+### 6. Sandboxed Script Experimentation
+- Evaluate third-party libraries, inspect unfamiliar code samples, or test experimental automation scripts inside an isolated directory without risking changes to host system files or environment variables.
+
+---
+
+## Zero-Trust Security Architecture
+
+Executing shell commands and modifying filesystem contents at the request of an LLM introduces significant security risks, including prompt injection, model hallucinations, and accidental host modification.
+
+This server implements a **Zero-Trust Hardened Security Model**. It treats every incoming tool call as potentially untrusted and applies multiple layers of validation before any action is executed.
 
 ### 1. Hardened Path Sandboxing (`safe_path`)
 Whenever Claude attempts to access a file, `safe_path()` resolves the canonical destination and verifies that it is strictly inside `D:\mcp\workspace`:
@@ -130,28 +160,28 @@ def safe_path(target: str) -> Path:
 
     return resolved
 ```
-* **Why it matters**: Even if Claude passes tricky combinations like `sub/../../secret.txt`, `.resolve()` turns it into `D:\mcp\secret.txt`. Because that path is outside `D:\mcp\workspace`, `is_relative_to()` evaluates to `False`, and access is immediately denied.
-* **Symlink / Junction Neutralization**: Windows directory junctions and NTFS symlinks are resolved to their true physical targets on disk before permission is granted.
+* **Mechanics**: Even if an LLM constructs complex relative paths like `sub/../../secret.txt`, `.resolve()` evaluates the canonical path to `D:\mcp\secret.txt`. Because that path is outside `D:\mcp\workspace`, `is_relative_to()` evaluates to `False`, and access is immediately denied.
+* **Symlink and Junction Neutralization**: Windows directory junctions and NTFS symlinks are resolved to their true physical targets on disk before permission is granted.
 
 ### 2. Forbidding Drive Letters in CLI Commands
 Any command string matching the regex `[a-zA-Z]:` is instantly rejected before reaching the shell.
 * **Blocked**: `type C:\Windows\win.ini`
 * **Blocked**: `dir c:`
 * **Blocked**: `D:\other\script.bat`
-* **Why it matters**: Claude cannot inspect or manipulate files on your `C:` drive or other directories on `D:`.
+* **Purpose**: Prevents the model from targeting host drives (`C:`) or directories outside the designated root on `D:`.
 
 ### 3. Forbidding Directory Traversal (`..`) in Commands
 Any occurrence of `..` anywhere in the command is rejected.
 * **Blocked**: `type ..\secret.txt`
 * **Blocked**: `cd ..`
-* **Why it matters**: Prevents escaping the working directory via relative parent hops.
+* **Purpose**: Prevents escaping the working directory via relative parent navigation.
 
 ### 4. Forbidding Environment Variable Expansion
 Commands containing `%...%` (Windows Command Prompt) or `$env:` (PowerShell) are rejected.
 * **Blocked**: `echo %SYSTEMROOT%`
 * **Blocked**: `type %USERPROFILE%\Desktop\passwords.txt`
 * **Blocked**: `echo $env:PATH`
-* **Why it matters**: Attackers cannot use Windows system variables to locate sensitive folders.
+* **Purpose**: Prevents resolving system environment variables to locate sensitive system directories or credentials.
 
 ### 5. Destructive Binary Blacklist
 Even within the workspace, critical administrative and destructive utilities are blocked using word-boundary pattern matching:
@@ -161,9 +191,9 @@ Even within the workspace, critical administrative and destructive utilities are
 > [!IMPORTANT]
 > In an MCP stdio server, `sys.stdout` belongs exclusively to the JSON-RPC wire protocol.
 
-If your code runs `print("Server started")`, that human text gets injected into the JSON stream. Claude Desktop's JSON parser will fail with a syntax error, causing the entire connection to crash with the dreaded *"Server disconnected"* error.
+If application code executes `print("Server started")`, that text is emitted into the standard output stream. Claude Desktop's JSON-RPC parser will encounter a deserialization failure, causing the connection to disconnect.
 
-**Our Rule**: All diagnostic logging is strictly routed to `sys.stderr` via Python's standard `logging` module:
+All diagnostic logging is strictly routed to `sys.stderr` via Python's standard `logging` module:
 ```python
 logging.basicConfig(
     level=logging.INFO,
@@ -172,63 +202,95 @@ logging.basicConfig(
 )
 ```
 
-### 7. Denial-of-Service & Resource Exhaustion Protection
-* **Output Truncation**: CLI output is capped at `50,000` characters. If a command runs `pip list` or dumps a gigantic binary file, output is cleanly truncated with an explanatory warning, preventing memory exhaustion in Claude Desktop.
-* **Strict Timeout**: All commands have a hard `30-second` timeout to terminate infinite loops or hung processes.
+### 7. Denial-of-Service and Resource Exhaustion Protection
+* **Output Truncation**: CLI output is capped at `50,000` characters. If a command attempts to dump a large binary or run an unbounded listing, output is cleanly truncated with an explanatory notice.
+* **Strict Execution Timeout**: All commands enforce a hard `30-second` timeout to terminate infinite loops or hung processes.
 
 ---
 
-## 🛠️ Step-by-Step Installation & Setup (Windows)
+## Setup on Any Machine
+
+Follow these instructions to deploy this MCP server on any Windows computer (or adapt it for macOS/Linux).
 
 ### Prerequisites
-* **Operating System**: Windows 10 or Windows 11
-* **Python**: Python 3.13 or newer ([Download from python.org](https://www.python.org/downloads/))
-* **uv Package Manager**: Fast Python package manager ([Install guide](https://docs.astral.sh/uv/getting-started/installation/))
-* **Claude Desktop**: Official Anthropic Claude Desktop client for Windows
+1. **Python 3.13+**: Installed and available in PATH ([python.org](https://www.python.org/downloads/)).
+2. **uv Package Manager**: Fast, standalone Python project manager:
+   ```powershell
+   # Windows PowerShell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+3. **Claude Desktop**: Installed on the target machine.
 
 ---
 
-### Step 1: Create Directories
-Open PowerShell and create both the server project folder and the workspace sandbox:
+### Method A: Clone the Repository (Recommended)
+
+1. Open PowerShell and clone this repository:
+   ```powershell
+   git clone https://github.com/Akashnidi/terminal_server.git D:\mcp\servers\terminal_server
+   Set-Location "D:\mcp\servers\terminal_server"
+   ```
+
+2. Create the target workspace sandbox folder:
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "D:\mcp\workspace"
+   ```
+
+3. Install dependencies and set up the virtual environment:
+   ```powershell
+   uv sync
+   ```
+
+---
+
+### Method B: Manual Setup from Scratch
+
+If creating the project independently without git:
 ```powershell
+# 1. Create project directories
 New-Item -ItemType Directory -Force -Path "D:\mcp\workspace"
 New-Item -ItemType Directory -Force -Path "D:\mcp\servers\terminal_server"
-```
-
----
-
-### Step 2: Initialize Project with `uv`
-Navigate to the server directory and set up the Python environment:
-```powershell
 Set-Location "D:\mcp\servers\terminal_server"
+
+# 2. Initialize project with uv
 uv init
 uv add "mcp[cli]"
-```
 
-> [!NOTE]
-> `uv` creates a lightning-fast virtual environment in `.venv` with `mcp` and its dependencies pre-installed.
+# 3. Place server.py in the directory
+```
 
 ---
 
-### Step 3: Find Full Path to `uv.exe`
-Claude Desktop needs the absolute path to your `uv.exe` executable. Run:
-```powershell
-where.exe uv
-```
-Typical output on Windows:
-```text
-C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python313\Scripts\uv.exe
-```
-*(Copy this path for the configuration step below).*
+### Customizing the Workspace Directory (Single Drive / Mac / Linux)
+
+By default, the server expects `D:\mcp\workspace`. If your computer does not have a `D:` drive or you are running on macOS/Linux:
+
+1. Open `server.py` in your text editor.
+2. Locate line 29:
+   ```python
+   # Default:
+   WORKSPACE_DIR = Path(r"D:\mcp\workspace").resolve()
+   ```
+3. Change it to your desired target path, for example:
+   ```python
+   # Windows with single C: drive:
+   WORKSPACE_DIR = Path(r"C:\mcp\workspace").resolve()
+
+   # macOS / Linux:
+   WORKSPACE_DIR = (Path.home() / "mcp" / "workspace").resolve()
+   ```
+4. Update the default error message string on line 33 to match your chosen directory:
+   ```python
+   SECURITY_VIOLATION_MSG = f"Security Violation: Access denied. Path is outside {WORKSPACE_DIR}."
+   ```
 
 ---
 
-## 🖥️ Claude Desktop Configuration
+## Claude Desktop Configuration
 
-Claude Desktop reads local MCP servers from a configuration file named `claude_desktop_config.json`.
+Claude Desktop reads local MCP servers from `claude_desktop_config.json`.
 
-### Where the Configuration File Lives on Windows:
-Depending on how Claude Desktop was installed, its config file is located at:
+### Finding the Configuration File on Windows:
 * **Standard Installer Path**:
   `%APPDATA%\Claude\claude_desktop_config.json`
   *(i.e. `C:\Users\<YourUsername>\AppData\Roaming\Claude\claude_desktop_config.json`)*
@@ -236,11 +298,21 @@ Depending on how Claude Desktop was installed, its config file is located at:
   `C:\Users\<YourUsername>\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json`
 
 > [!TIP]
-> You can open this file directly from inside Claude Desktop by going to:
+> You can open this file directly from inside Claude Desktop by navigating to:
 > **Settings (`Ctrl+,`) → Developer → Edit Config**.
 
-### The Exact JSON Configuration:
-Open your `claude_desktop_config.json` and add the `workspace-manager` entry under `mcpServers`. Make sure to **double-escape backslashes** (`\\`) in Windows paths:
+### Locating Your `uv.exe` Path:
+Find the absolute path to your `uv.exe` binary:
+```powershell
+where.exe uv
+```
+Example output:
+```text
+C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python313\Scripts\uv.exe
+```
+
+### Adding the Server to Configuration:
+Open `claude_desktop_config.json` and insert the server definition under `mcpServers`. Ensure all backslashes are double-escaped (`\\`):
 
 ```json
 {
@@ -259,14 +331,14 @@ Open your `claude_desktop_config.json` and add the `workspace-manager` entry und
 ```
 
 > [!CAUTION]
-> **Always Restart Claude Desktop!**
-> Claude Desktop only spawns MCP server processes when the application starts up. Whenever you modify `server.py` or edit `claude_desktop_config.json`, fully close Claude Desktop (check the Windows System Tray / Task Manager) and launch it again.
+> **Process Restart Required**
+> Claude Desktop only spawns MCP server processes during application startup. Whenever `server.py` or `claude_desktop_config.json` is modified, completely close Claude Desktop (verify the Windows System Tray / Task Manager) and relaunch the application.
 
 ---
 
-## 🧪 Experiments We Performed & Results (The Proof)
+## Security Verification and Experimental Results
 
-To verify the Zero-Trust security model, we ran red-team and functional tests against the running server. Here are the real results:
+The following test suite was executed against the running server to validate security constraints and operational capabilities:
 
 ### Test 1: Drive Escape Attack
 * **Scenario**: Attempting to read a sensitive Windows OS file on `C:` drive via terminal command.
@@ -275,29 +347,29 @@ To verify the Zero-Trust security model, we ran red-team and functional tests ag
   ```text
   Security Violation: Access denied. Drive letters (e.g. 'C:', 'D:') are forbidden in commands.
   ```
-* **Status**: ✅ **BLOCKED**
+* **Status**: **BLOCKED**
 
 ---
 
 ### Test 2: Directory Traversal Escape Attack
-* **Scenario**: Attempting to hop backward out of the workspace sandbox to read secret files.
+* **Scenario**: Attempting to traverse upward out of the workspace sandbox to read external files.
 * **Tool Call**: `read_file("../../secret.txt")`
 * **Server Interception**:
   ```text
   Security Violation: Access denied. Path is outside D:\mcp\workspace.
   ```
-* **Status**: ✅ **BLOCKED**
+* **Status**: **BLOCKED**
 
 ---
 
 ### Test 3: Environment Variable Reconnaissance
-* **Scenario**: Attempting to expand `%SYSTEMROOT%` or `$env:USERPROFILE` to locate user files.
+* **Scenario**: Attempting to expand `%SYSTEMROOT%` or `$env:USERPROFILE` to locate system paths.
 * **Command Submitted**: `echo %SYSTEMROOT%`
 * **Server Interception**:
   ```text
   Security Violation: Access denied. Environment variable expansion ('%...%') is forbidden.
   ```
-* **Status**: ✅ **BLOCKED**
+* **Status**: **BLOCKED**
 
 ---
 
@@ -308,16 +380,16 @@ To verify the Zero-Trust security model, we ran red-team and functional tests ag
   ```text
   Security Violation: Access denied. Destructive system command is blacklisted.
   ```
-* **Status**: ✅ **BLOCKED**
+* **Status**: **BLOCKED**
 
 ---
 
 ### Test 5: Legitimate Workspace Operations
-* **Scenario**: Asking Claude to create a Python script `app.py` in `D:\mcp\workspace`, list the folder, and run it.
+* **Scenario**: Creating a Python script `app.py` in `D:\mcp\workspace`, listing directory contents, and executing the script.
 * **Actions Performed**:
   1. `write_file("app.py", "print('Hello from Workspace Sandbox!')")`
-  2. `list_workspace(".")` -> Confirmed `app.py` is present (`38` bytes).
-  3. `execute_command("python app.py")` -> Returned:
+  2. `list_workspace(".")` -> Confirmed `app.py` presence (`38` bytes).
+  3. `execute_command("python app.py")` -> Output:
      ```json
      {
        "stdout": "Hello from Workspace Sandbox!\n",
@@ -325,67 +397,67 @@ To verify the Zero-Trust security model, we ran red-team and functional tests ag
        "exit_code": 0
      }
      ```
-* **Status**: ✅ **PASSED (100% Functionality Preserved)**
+* **Status**: **PASSED** (100% functionality preserved)
 
 ---
 
 ### Test 6: Human-in-the-Loop Safeguard
-Before Claude Desktop executes any tool (`write_file`, `execute_command`), Claude presents an interactive prompt to the human user displaying the exact tool arguments:
+Before Claude Desktop executes any tool (`write_file`, `execute_command`), Claude presents an interactive prompt to the user detailing the proposed action:
 
 ```
 [Claude wants to call WorkspaceManager: execute_command]
 command: "python app.py"
 [Allow Once]  [Allow Always for This Chat]  [Reject]
 ```
-Even if an adversarial prompt injection attacks Claude's reasoning, you retain final veto power over every execution.
+This ensures an additional layer of human verification against prompt injection or unintended model actions.
 
 ---
 
-## 🧰 Available Tools Reference
+## Available Tools Reference
 
 | Tool Name | Parameters | Return Type | Description |
 | :--- | :--- | :--- | :--- |
 | `list_workspace` | `subpath: str = "."` | `str` (JSON) | Lists files and directories with sizes and types inside the workspace. Rejects escaping paths. |
-| `read_file` | `filepath: str` | `str` | Safely reads UTF-8 text files inside `D:\mcp\workspace`. Returns clean security message if boundary is breached. |
+| `read_file` | `filepath: str` | `str` | Safely reads UTF-8 text files inside `D:\mcp\workspace`. Returns descriptive security message if boundary is breached. |
 | `write_file` | `filepath: str`, `content: str` | `str` | Writes text files, creating parent directories safely within the workspace boundary. |
 | `execute_command` | `command: str` | `str` (JSON) | Runs sanitized CLI commands with strict timeout (30s) and output capping (50K chars). Working directory locked to `D:\mcp\workspace`. |
 
 ---
 
-## 🔧 Troubleshooting Guide (Windows Gotchas)
+## Troubleshooting Guide (Windows Gotchas)
 
 ### 1. Hammer / Connector Icon Does Not Appear in Claude
-* **Cause**: Claude Desktop failed to launch `uv.exe` or could not find `server.py`.
-* **Fix**:
+* **Cause**: Claude Desktop failed to launch `uv.exe` or could not locate `server.py`.
+* **Resolution**:
   1. Confirm `uv.exe` path exists using `Test-Path "C:\path\to\uv.exe"`.
-  2. Check that all backslashes in `claude_desktop_config.json` are doubled (`\\`).
-  3. Check Claude's diagnostic log files located at:
+  2. Ensure all backslashes in `claude_desktop_config.json` are escaped (`\\`).
+  3. Review Claude's diagnostic log files located at:
      `%APPDATA%\Claude\logs\mcp*.log`
 
 ### 2. Code Changes in `server.py` Are Not Taking Effect
-* **Cause**: Claude Desktop keeps the server subprocess running for the duration of the app session.
-* **Fix**: Completely exit Claude Desktop (Right-click tray icon → Quit, or kill via Task Manager) and restart.
+* **Cause**: Claude Desktop maintains active server subprocesses for the lifetime of the application session.
+* **Resolution**: Completely exit Claude Desktop (Right-click tray icon → Quit, or terminate via Task Manager) and restart.
 
 ### 3. "No module named 'mcp.server.fastmcp'" Error
 * **Cause**: `mcp` 2.x renamed `FastMCP` to `MCPServer`.
-* **Fix**: Our `server.py` includes backward and forward compatibility:
+* **Resolution**: `server.py` implements import fallback handling:
   ```python
   try:
       from mcp.server.fastmcp import FastMCP
   except (ImportError, ModuleNotFoundError):
       from mcp.server.mcpserver import MCPServer as FastMCP
   ```
-  This handles both legacy v1 environments and the new v2 SDK automatically.
+  This automatically supports both v1 and v2 SDK releases.
 
 ### 4. Accidental Command Rejections
-* If you run a command like `python C:\script.py`, it will be blocked by design because of `C:`.
-* **Fix**: Keep all assets and dependencies inside `D:\mcp\workspace` and use relative references (`python script.py`).
+* Executing commands containing explicit drive references (e.g. `python C:\script.py`) is rejected by design.
+* **Resolution**: Keep all assets and dependencies inside `D:\mcp\workspace` and use relative paths (`python script.py`).
 
 ---
 
-## 📄 License & Credits
+## License and Credits
 
-Built with ❤️ using:
+Built using:
 * [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) by Anthropic
 * [FastMCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 * [uv](https://github.com/astral-sh/uv) by Astral
